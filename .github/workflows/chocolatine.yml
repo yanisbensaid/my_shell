@@ -1,0 +1,90 @@
+name: Chocolatine
+
+run-name: Chocolatine Workflow
+
+on:
+  push:
+    branches-ignore:
+      - 'ga-ignore-*'
+  pull_request:
+    branches-ignore:
+      - 'ga-ignore-*'
+
+env:
+  MIRROR_URL: 'git@github.com:EpitechPromo2028/B-PSU-200-MPL-2-1-42sh-matteo.chapelle-esmel.git'
+  EXECUTABLES: '42sh'
+
+jobs:
+  check_coding_style:
+    needs: setup
+    name: check_coding_style
+    if: ${{ github.actor != 'github-actions[bot]' && needs.setup.outputs.ignore != 'false' }}
+    runs-on: ubuntu-latest
+    container: ghcr.io/epitech/coding-style-checker:latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@main
+      - name: Check Coding Style
+        run: |
+          check.sh $(pwd) $(pwd)
+          if [ -s coding-style-reports.log ]; then
+            while IFS= read -r line
+            do
+              file=$(echo $line | cut -d':' -f1)
+              line_number=$(echo $line | cut -d':' -f2)
+              title=$(echo $line | cut -d':' -f3)
+              severity=$(echo $line | cut -d':' -f4)
+              echo "::error file=$file,line=$line_number,title=$title coding style error::$severity"
+            done < coding-style-reports.log
+            exit 1
+          fi
+
+  check_program_compilation:
+    name: check_program_compilation
+    needs: check_coding_style
+    if: ${{ github.actor != 'github-actions[bot]' && needs.setup.outputs.ignore != 'false' }}
+    runs-on: ubuntu-latest
+    container: epitechcontent/epitest-docker
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@main
+      - name: Compile Program
+        run: make
+        timeout-minutes: 2
+      - name: Clean Program
+        run: make clean
+      - name: Check Executables
+        run: |
+          IFS=',' read -ra ADDR <<< "$EXECUTABLES"
+          for i in "${ADDR[@]}"; do
+            if [ ! -x "$i" ]; then
+              echo "$i is not executable or does not exist"
+              exit 1
+            fi
+          done
+
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      ignore: ${{ steps.set_ignore.outputs.ignore }}
+    steps:
+      - id: set_ignore
+        run: echo "::set-output name=ignore::${{ contains(secrets.IGNORE_REPOS, github.repository ) }}"
+        timeout-minutes: 2
+
+  push_to_mirror:
+    needs: check_program_compilation
+    if: ${{ github.actor != 'github-actions[bot]' && needs.setup.outputs.ignore != 'false' }}
+    name: push_to_mirror
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@main
+        with:
+          fetch-depth: 0
+      - name: Mirroring Repository
+        uses: pixta-dev/repository-mirroring-action@main
+        with:
+          target_repo_url:
+            ${{ env.MIRROR_URL }}
+          ssh_private_key:
+            ${{ secrets.GIT_SSH_PRIVATE_KEY }}
